@@ -1,30 +1,27 @@
 // main.js
 const readline = require('readline');
 const { setBaseUrl, requestJob, submitResult } = require('./apiClient');
-const { initializeBrowser, closeBrowser, scrapeEpisode } = require('./scraper');
+const { initializeBrowser, closeBrowser, scrapeEpisode } = require('./scraper'); // Scraper yang diupdate
 const { sleep } = require('./utils');
 
 const JOB_REQUEST_INTERVAL_MS = 10 * 60 * 1000; // 10 menit
 const EPISODE_SCRAPE_DELAY_MS = 2 * 1000;      // 2 detik
 
-// Helper untuk membaca input dari CLI
-async function askQuestion(query) {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
+async function prompt(question) {
+    return new Promise((resolve) => {
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        rl.question(question, (answer) => {
+            rl.close();
+            resolve(answer.trim());
+        });
     });
-    return new Promise(resolve => rl.question(query, ans => {
-        rl.close();
-        resolve(ans.trim());
-    }));
-}
-
-async function promptBaseUrl() {
-    return askQuestion('Masukkan base_url API Manager (misal: http://localhost:5000/api/v1): ');
 }
 
 async function getBaseUrl() {
-    const baseUrl = await promptBaseUrl();
+    const baseUrl = await prompt('Masukkan base_url API Manager (misal: http://localhost:5000/api/v1): ');
     if (!baseUrl) {
         console.error('base_url tidak boleh kosong. Keluar.');
         process.exit(1);
@@ -33,94 +30,95 @@ async function getBaseUrl() {
 }
 
 // --- FUNGSI BARU: Manual Mode ---
-async function manualModeLoop() {
+async function manualMode() {
     console.log('\n--- Mode Manual Dimulai ---');
-    console.log('Anda akan diminta memasukkan URL episode dan MAL ID secara manual.');
+    await initializeBrowser(); // Inisialisasi browser untuk scraping manual
 
     while (true) {
-        const episodeUrl = await askQuestion('Masukkan URL halaman episode (misal: https://v1.samehadaku.how/anime-slug-episode-1): ');
+        const episodeUrl = await prompt('Masukkan link episode yang ingin di-scrape (ketik "exit" untuk keluar): ');
+        if (episodeUrl.toLowerCase() === 'exit') break;
         if (!episodeUrl) {
-            console.log('URL episode tidak boleh kosong. Ketik "exit" untuk keluar dari mode manual.');
-            const exitCommand = await askQuestion('Ketik "exit" untuk keluar, atau tekan Enter untuk mencoba lagi: ');
-            if (exitCommand.toLowerCase() === 'exit') break;
+            console.log('Link episode tidak boleh kosong.');
             continue;
         }
 
-        const malIdInput = await askQuestion('Masukkan MAL ID anime (misal: 54899) atau MAL ID + UID (misal: 68cf22407e6884c7bef1657e/54899): ');
+        const malIdInput = await prompt('Masukkan MAL ID anime (contoh: 54899) atau MAL ID/Episode ID (contoh: 68cf22407e6884c7bef1657e/54899): ');
         if (!malIdInput) {
-            console.log('MAL ID tidak boleh kosong. Ketik "exit" untuk keluar dari mode manual.');
-            const exitCommand = await askQuestion('Ketik "exit" untuk keluar, atau tekan Enter untuk mencoba lagi: ');
-            if (exitCommand.toLowerCase() === 'exit') break;
+            console.log('MAL ID atau format MAL ID/Episode ID tidak boleh kosong.');
             continue;
         }
 
-        let animeMalId;
-        let episodeNumber;
-        let submitMalId;
+        let mal_id;
+        let episode_number_for_db; // Ini adalah nomor episode yang akan dikirim ke DB
 
-        // Mendapatkan episodeNumber dari URL
-        const episodeMatch = episodeUrl.match(/-episode-(\d+)(?:[/]|$)/i);
-        if (episodeMatch && episodeMatch[1]) {
-            episodeNumber = parseInt(episodeMatch[1], 10);
+        // Logika untuk memparse malIdInput
+        // Jika formatnya 'HASH/MAL_ID'
+        const parts = malIdInput.split('/');
+        if (parts.length === 2 && !isNaN(parseInt(parts[1], 10))) {
+            mal_id = parseInt(parts[1], 10);
+            // Coba ekstrak nomor episode dari URL jika tidak ada di input malIdInput
+            const urlEpisodeMatch = episodeUrl.match(/episode-(\d+)/i);
+            if (urlEpisodeMatch) {
+                episode_number_for_db = parseInt(urlEpisodeMatch[1], 10);
+            } else {
+                episode_number_for_db = parseInt(await prompt('Gagal mengekstrak nomor episode dari URL. Masukkan nomor episode secara manual: '), 10);
+                if (isNaN(episode_number_for_db)) {
+                    console.log('Nomor episode harus berupa angka.');
+                    continue;
+                }
+            }
+        } else if (!isNaN(parseInt(malIdInput, 10))) {
+            mal_id = parseInt(malIdInput, 10);
+            // Pastikan episode number diambil dari URL jika hanya MAL ID saja yang diberikan
+            const urlEpisodeMatch = episodeUrl.match(/episode-(\d+)/i);
+            if (urlEpisodeMatch) {
+                episode_number_for_db = parseInt(urlEpisodeMatch[1], 10);
+            } else {
+                episode_number_for_db = parseInt(await prompt('Gagal mengekstrak nomor episode dari URL. Masukkan nomor episode secara manual: '), 10);
+                if (isNaN(episode_number_for_db)) {
+                    console.log('Nomor episode harus berupa angka.');
+                    continue;
+                }
+            }
         } else {
-            console.error('Gagal mengekstrak nomor episode dari URL. Pastikan format URL benar.');
+            console.log('Format MAL ID tidak valid. Harap masukkan angka atau format HASH/MAL_ID.');
             continue;
         }
 
-        // Memproses input MAL ID yang mungkin memiliki UID
-        if (malIdInput.includes('/')) {
-            const parts = malIdInput.split('/');
-            // UID diabaikan di sini, kita hanya perlu MAL ID
-            submitMalId = parseInt(parts[1], 10);
-            animeMalId = parseInt(parts[1], 10); // Untuk internal bot
-        } else {
-            submitMalId = parseInt(malIdInput, 10);
-            animeMalId = parseInt(malIdInput, 10); // Untuk internal bot
-        }
-
-        if (isNaN(animeMalId) || isNaN(episodeNumber)) {
-            console.error('MAL ID atau Nomor Episode tidak valid. Pastikan Anda memasukkan angka.');
+        // Pastikan episode_number_for_db valid
+        if (isNaN(episode_number_for_db) || episode_number_for_db < 1) {
+            console.log('Nomor episode tidak valid atau tidak dapat ditentukan. Harap masukkan URL yang jelas.');
             continue;
         }
 
-        console.log(`\n--- Memulai Scraping Manual ---`);
-        console.log(`URL: ${episodeUrl}`);
-        console.log(`Anime MAL ID: ${animeMalId}`);
-        console.log(`Episode Number: ${episodeNumber}`);
+
+        console.log(`\n[Manual] Memulai scrape untuk MAL ID: ${mal_id}, Episode: ${episode_number_for_db} dari URL: ${episodeUrl}`);
 
         try {
-            const scrapeResult = await scrapeEpisode(episodeUrl, episodeNumber);
+            const scrapeResult = await scrapeEpisode(episodeUrl, episode_number_for_db); // Gunakan episode_number_for_db untuk logging di scraper
 
             if (scrapeResult.success) {
-                console.log(`Berhasil scrape Episode ${episodeNumber}. Ditemukan ${scrapeResult.links.length} link.`);
-                // Mengirimkan hasil ke backend
-                if (submitMalId) { // Pastikan submitMalId valid
-                    await submitResult(submitMalId, episodeNumber, scrapeResult.links);
-                    console.log('Hasil scraping manual berhasil dikirim ke backend.');
-                } else {
-                    console.error('MAL ID tidak ditemukan untuk submit. Hasil tidak dikirim ke backend.');
-                }
+                console.log(`[Manual] Berhasil scrape Episode ${episode_number_for_db}. Ditemukan ${scrapeResult.links.length} link.`);
+                // Kirim hasil ke backend
+                await submitResult(mal_id, episode_number_for_db, scrapeResult.links);
+                console.log(`[Manual] Link berhasil dikirim ke database untuk MAL ID ${mal_id} Ep ${episode_number_for_db}.`);
             } else {
-                console.error(`Gagal scrape Episode ${episodeNumber}.`);
+                console.log(`[Manual] Gagal scrape Episode ${episode_number_for_db} dari ${episodeUrl}.`);
             }
         } catch (error) {
-            console.error('Error saat scraping manual:', error);
+            console.error(`[Manual] Error saat scraping manual:`, error);
         }
-
-        const continuePrompt = await askQuestion('Scraping selesai. Scrape episode lain secara manual? (ya/tidak): ');
-        if (continuePrompt.toLowerCase() !== 'ya') {
-            break;
-        }
+        await sleep(EPISODE_SCRAPE_DELAY_MS); // Beri jeda antar scraping manual
     }
-    console.log('\n--- Keluar dari Mode Manual ---');
+    console.log('--- Mode Manual Selesai ---');
+    await closeBrowser(); // Tutup browser setelah mode manual selesai
 }
 
-// mainLoop yang sudah ada (Bot Mode)
 async function mainLoop(baseUrlToUse) {
-    console.log('Worker Bot AnimeVerse dimulai dalam Mode Otomatis...');
+    console.log('Worker Bot AnimeVerse dimulai...');
     console.log(`Menggunakan API Manager: ${baseUrlToUse}`);
 
-    await initializeBrowser();
+    await initializeBrowser(); // Inisialisasi browser untuk mode bot
 
     while (true) {
         try {
@@ -143,7 +141,6 @@ async function mainLoop(baseUrlToUse) {
                     continue;
                 }
 
-                // Mengambil base_url pertama dari array base_links
                 const baseUrl = anime.base_links[0].url;
                 if (!baseUrl) {
                     console.log(`[Peringatan] Anime [${anime.mal_id}] punya base_links tapi URL kosong. Melewati.`);
@@ -151,18 +148,26 @@ async function mainLoop(baseUrlToUse) {
                 }
                 console.log(`Menggunakan Base URL: ${baseUrl}`);
 
+                // Ambil total episode dari anime obj jika ada
+                const totalAnimeEpisodes = anime.episodes || 999; // Default tinggi jika tidak diketahui
+
                 let currentEpisodeNumber = 1;
                 let foundLastEpisode = false;
 
-                while (!foundLastEpisode) {
+                while (!foundLastEpisode && currentEpisodeNumber <= totalAnimeEpisodes) { // Batasi berdasarkan total episode
                     const cleanedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-                    // Logika untuk membuat URL episode dari base_url anime
-                    // Asumsi: baseUrl adalah 'https://v1.samehadaku.how/anime/anime-slug/'
-                    // Maka episodeUrl akan jadi 'https://v1.samehadaku.how/anime-slug-episode-1'
                     const lastSlashIndex = cleanedBaseUrl.lastIndexOf('/');
                     const slug = cleanedBaseUrl.substring(lastSlashIndex + 1);
-                    const domainPart = cleanedBaseUrl.substring(0, cleanedBaseUrl.lastIndexOf('/anime/')); // Mengambil 'https://v1.samehadaku.how'
-                    const episodeUrl = `${domainPart}/${slug}-episode-${currentEpisodeNumber}`;
+                    const domainPart = cleanedBaseUrl.substring(0, cleanedBaseUrl.indexOf('/anime/')); // Perbaiki ini jika struktur URLnya `/domain.com/anime/slug`
+
+                    // Rekonstruksi URL episode:
+                    // Contoh: https://v1.samehadaku.how/anime/slug-anime-episode-1
+                    // Perlu lebih cerdas dalam mengkonstruksi URL episode dari base_link
+                    // Asumsi base_link: https://v1.samehadaku.how/anime/slug-anime/
+                    // Maka episode: https://v1.samehadaku.how/anime/slug-anime-episode-1
+
+                    const animeSlug = cleanedBaseUrl.substring(cleanedBaseUrl.lastIndexOf('/anime/') + 7, cleanedBaseUrl.lastIndexOf('/'));
+                    const episodeUrl = `${domainPart}/anime/${animeSlug}-episode-${currentEpisodeNumber}`;
 
 
                     console.log(`Mencoba scrape Episode ${currentEpisodeNumber} dari ${episodeUrl}`);
@@ -170,7 +175,7 @@ async function mainLoop(baseUrlToUse) {
                     const scrapeResult = await scrapeEpisode(episodeUrl, currentEpisodeNumber);
 
                     if (!scrapeResult.success) {
-                        console.log(`Episode ${currentEpisodeNumber} tidak ditemukan di ${episodeUrl}. Stop untuk anime ini.`);
+                        console.log(`Episode ${currentEpisodeNumber} tidak ditemukan di ${episodeUrl} atau gagal. Stop untuk anime ini.`);
                         foundLastEpisode = true;
                     } else {
                         console.log(`Berhasil scrape Episode ${currentEpisodeNumber}. Link: ${scrapeResult.links.length}`);
@@ -190,6 +195,7 @@ async function mainLoop(baseUrlToUse) {
     }
 }
 
+
 // Tangani sinyal keluar
 process.on('SIGINT', async () => {
     console.log('\nSIGINT diterima. Menutup browser...');
@@ -204,21 +210,14 @@ process.on('SIGTERM', async () => {
 
 // Jalankan bot
 (async () => {
-    // Selalu minta Base URL API Manager dulu
     const baseUrlToUse = await getBaseUrl();
-    setBaseUrl(baseUrlToUse); // Set Base URL untuk apiClient
+    setBaseUrl(baseUrlToUse);
 
-    // Tanyakan mode operasi
-    const botModeAnswer = await askQuestion('Jalankan bot dalam Mode Otomatis? (ya/tidak): ');
+    const mode = await prompt('Jalankan bot dalam mode otomatis (bot) atau manual (manual)? ');
 
-    await initializeBrowser(); // Inisialisasi browser sekali di awal
-
-    if (botModeAnswer.toLowerCase() === 'ya') {
-        await mainLoop(baseUrlToUse); // Masuk ke Bot Mode
+    if (mode.toLowerCase() === 'manual') {
+        await manualMode();
     } else {
-        await manualModeLoop(); // Masuk ke Manual Mode
+        await mainLoop(baseUrlToUse);
     }
-
-    await closeBrowser(); // Tutup browser saat semua mode selesai
-    process.exit(0);
-})();
+})(); 
