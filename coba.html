@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Anime API Tester</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;400&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Montserrat', Arial, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 40px auto 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 18px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+            padding: 32px 28px 28px 28px;
+        }
+
+        h1 {
+            text-align: center;
+            font-weight: 700;
+            font-size: 2.2rem;
+            letter-spacing: 1px;
+            color: #2d3a4b;
+            margin-bottom: 18px;
+        }
+
+        .input-field {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 18px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .input-field input {
+            flex: 1;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1.5px solid #bfc9d1;
+            font-size: 1rem;
+            transition: border 0.2s;
+            min-width: 80px;
+        }
+
+        .input-field input:focus {
+            border: 1.5px solid #007bff;
+            outline: none;
+        }
+
+        .input-field button {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(90deg, #007bff 60%, #00c6ff 100%);
+            color: white;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0, 123, 255, 0.08);
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        .input-field button:hover {
+            background: linear-gradient(90deg, #0056b3 60%, #0099cc 100%);
+            transform: translateY(-2px) scale(1.03);
+        }
+
+        .btn-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .btn-container button {
+            padding: 12px 0;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(90deg, #ff7e5f 0%, #feb47b 100%);
+            color: #fff;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(255, 126, 95, 0.08);
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        .btn-container button:hover {
+            background: linear-gradient(90deg, #ff5e62 0%, #ff9966 100%);
+            transform: translateY(-2px) scale(1.03);
+        }
+
+        h3 {
+            margin-top: 0;
+            color: #2d3a4b;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        #response-box {
+            background: #f8fafc;
+            padding: 18px;
+            border-radius: 12px;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.07);
+            white-space: pre-wrap;
+            overflow-x: auto;
+            max-height: 60vh;
+            font-size: 1.02rem;
+            color: #2d3a4b;
+            margin-bottom: 0;
+            min-height: 60px;
+            transition: background 0.2s;
+        }
+
+        .loader-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.7);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.2s;
+        }
+
+        .loader {
+            width: 60px;
+            height: 60px;
+            border: 7px solid #e0e7ef;
+            border-top: 7px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loader-text {
+            font-family: 'Montserrat', Arial, sans-serif;
+            color: #007bff;
+            font-weight: 600;
+            font-size: 1.1rem;
+            text-align: center;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Anime API Tester</h1>
+
+        <!-- Input untuk ID + Pagination -->
+        <div class="input-field">
+            <input type="text" id="animeId" placeholder="Anime ID">
+            <input type="number" id="page" placeholder="Page" value="1" min="1">
+            <input type="number" id="limit" placeholder="Limit" value="10" min="1">
+            <button onclick="fetchFull()">Get Full Detail</button>
+            <button onclick="fetchRecs()">Get Recommendations</button>
+        </div>
+
+        <div class="btn-container">
+            <button onclick="fetchApi('/')">Get Anime List</button>
+            <button onclick="fetchApi('/top/anime')">Get Top Anime</button>
+            <button onclick="fetchApi('/seasons/now')">Get Season Now</button>
+            <button onclick="fetchApi('/schedules')">Get Weekly Schedules</button>
+            <button onclick="fetchApi('/genres/anime', false)">Get Genres</button>
+        </div>
+
+        <h3>Response:</h3>
+        <pre id="response-box">{ Klik tombol di atas untuk melihat hasil }</pre>
+    </div>
+
+    <div id="loader-overlay" class="loader-overlay" style="display:none;">
+        <div>
+            <div class="loader"></div>
+            <div class="loader-text">Memuat data...</div>
+        </div>
+    </div>
+
+    <script>
+        const BASE_URL = 'http://localhost:5000/api/v1/';
+
+        function showLoader() {
+            document.getElementById('loader-overlay').style.display = 'flex';
+        }
+        function hideLoader() {
+            document.getElementById('loader-overlay').style.display = 'none';
+        }
+
+        async function fetchApi(endpoint, usePagination = true) {
+            showLoader();
+            document.getElementById('response-box').textContent = '';
+            try {
+                let url = BASE_URL + endpoint;
+                if (usePagination) {
+                    const page = document.getElementById('page').value;
+                    const limit = document.getElementById('limit').value;
+                    const sep = endpoint.includes('?') ? '&' : '?';
+                    url += `${sep}page=${page}&limit=${limit}`;
+                }
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status + ' - ' + res.statusText);
+                const data = await res.json();
+                document.getElementById('response-box').textContent = JSON.stringify(data, null, 2);
+            } catch (err) {
+                document.getElementById('response-box').textContent = 'Error: ' + err.message;
+            } finally {
+                hideLoader();
+            }
+        }
+
+        async function fetchFull() {
+            const id = document.getElementById('animeId').value.trim();
+            if (!id) return alert('Masukkan anime ID!');
+            fetchApi(`/${id}/full`, false);
+        }
+
+        async function fetchRecs() {
+            const id = document.getElementById('animeId').value.trim();
+            if (!id) return alert('Masukkan anime ID!');
+            fetchApi(`/${id}/recommendations`, false);
+        }
+    </script>
+</body>
+
+</html>
