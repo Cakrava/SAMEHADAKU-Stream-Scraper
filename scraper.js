@@ -214,8 +214,6 @@ async function scrapeEpisode(url, episodeNumber) {
 
         console.log(`[Scraper] Fase ekstraksi selesai. Total link di pool: ${currentLinksInPool}. Total server berbeda diklik: ${clickedServerNamesInPhase1.size}`);
 
-
-        // --- FASE 2: Seleksi & Penambalan Link Output ---
         const finalStreamLinksOutput = [];
         const selectedPrimaryServers = []; // Server yang akan jadi 2 server utama di output
         const occupiedQualities = new Map(); // Map<ServerName, Set<Quality>> untuk slot yang sudah terisi di output final
@@ -230,92 +228,111 @@ async function scrapeEpisode(url, episodeNumber) {
         }
         console.log(`[Scraper] Server utama terpilih untuk output: ${selectedPrimaryServers.join(', ')}`);
 
-
-        // 2.2: Isi resolusi untuk 2 server utama yang terpilih, dan identifikasi slot yang hilang
-        const missingSlots = []; // List of { server: primaryServerName, quality: missingQuality }
-
-        for (const primaryServer of selectedPrimaryServers) {
-            for (const targetQuality of TARGET_RESOLUTIONS_PER_SERVER) {
-                const link = availableLinksMap.get(primaryServer)?.get(targetQuality);
-                if (link) {
-                    finalStreamLinksOutput.push(link);
-                    occupiedQualities.get(primaryServer).add(targetQuality);
-                } else {
-                    missingSlots.push({ server: primaryServer, quality: targetQuality });
-                }
-            }
-        }
-
-        // 2.3: Proses Penambalan (Patching) untuk slot yang hilang
-        // Prioritaskan 1080p dulu, lalu 720p, lalu 480p
-        missingSlots.sort((a, b) => {
-            const qualityOrder = { '1080p': 1, '720p': 2, '480p': 3 };
-            return (qualityOrder[a.quality] || 99) - (qualityOrder[b.quality] || 99);
-        });
-
-        for (const missingSlot of missingSlots) {
-            const { server: targetPrimaryServer, quality: missingQuality } = missingSlot;
-            console.log(`[Scraper] Mencoba menambal slot: ${targetPrimaryServer} - ${missingQuality}`);
-
-            let patchLinkFound = null;
-
-            // Prioritas penambalan dari server lain (bukan dari server utama itu sendiri)
-            for (const patchServerName of OUTPUT_SERVER_PRIORITY_ORDER) {
-                if (patchServerName === targetPrimaryServer) continue; // Jangan menambal dari diri sendiri
-
-                const hasMissingQuality = availableLinksMap.get(patchServerName)?.has(missingQuality);
-
-                if (hasMissingQuality) {
-                    // Hanya ambil jika server patch ini belum mengisi slot kualitas ini
-                    if (!occupiedQualities.get(patchServerName)?.has(missingQuality)) {
-                        patchLinkFound = availableLinksMap.get(patchServerName).get(missingQuality);
-                        console.log(`[Scraper] Penambal ditemukan dari server prioritas: ${patchServerName} untuk ${missingQuality}.`);
-                        break; // Ambil yang paling prioritas pertama yang ditemukan
+        // BARU: --- Logika utama untuk membangun output final ---
+        if (selectedPrimaryServers.length === 0 && availableLinksMap.size > 0) {
+            // SkENARIO "SEADANYA" - TIDAK ADA SERVER PRIORITAS
+            console.log("[Scraper] WARN: Tidak ada server prioritas yang menyediakan link. Beralih ke mode 'seadanya'.");
+            // Ambil semua link yang tersedia di availableLinksMap yang sesuai dengan resolusi target
+            const tempFallbackLinks = [];
+            for (const [sName, sLinks] of availableLinksMap.entries()) {
+                for (const targetQuality of TARGET_RESOLUTIONS_PER_SERVER) {
+                    const link = sLinks.get(targetQuality);
+                    if (link && !tempFallbackLinks.some(fl => fl.server === link.server && fl.quality === link.quality)) {
+                        tempFallbackLinks.push(link);
                     }
                 }
             }
+            // Urutkan dan tambahkan ke finalStreamLinksOutput
+            tempFallbackLinks.sort((a, b) => {
+                const serverPriorityA = SERVER_PRIORITY[a.server] || SERVER_PRIORITY['DefaultServer'];
+                const serverPriorityB = SERVER_PRIORITY[b.server] || SERVER_PRIORITY['DefaultServer'];
+                if (serverPriorityA !== serverPriorityB) {
+                    return serverPriorityA - serverPriorityB;
+                }
+                const qualityOrder = { '1080p': 1, '720p': 2, '480p': 3 };
+                return (qualityOrder[a.quality] || 99) - (qualityOrder[b.quality] || 99);
+            });
+            finalStreamLinksOutput.push(...tempFallbackLinks);
 
-            // BARU: Tambahan untuk skenario "seadanya" jika dari OUTPUT_SERVER_PRIORITY_ORDER tidak ada
-            if (!patchLinkFound && currentLinksInPool > 0) { // Jika belum ada penambal dan ada link di pool
-                console.log(`[Scraper] Mencari penambal 'seadanya' untuk ${missingQuality} dari server yang tidak diutamakan...`);
-                // Kumpulkan semua link yang tersedia untuk kualitas yang hilang, dari server yang belum mengisi slot ini
-                const fallbackLinks = [];
-                for (const [sName, sLinks] of availableLinksMap.entries()) {
-                    if (sName === targetPrimaryServer) continue; // Jangan dari server utama yang sedang ditambal
-
-                    // Periksa apakah server ini sudah mengisi slot kualitas ini
-                    if (occupiedQualities.has(sName) && occupiedQualities.get(sName).has(missingQuality)) {
-                        continue; // Skip jika server ini sudah menyediakan link untuk kualitas ini
-                    }
-
-                    const link = sLinks.get(missingQuality);
+        } else if (selectedPrimaryServers.length > 0) {
+            // SKENARIO REGULAR - ADA SERVER PRIORITAS (dengan penambalan)
+            console.log("[Scraper] Membangun output dari server prioritas (dengan potensi penambalan)...");
+            const missingSlots = [];
+            for (const primaryServer of selectedPrimaryServers) {
+                for (const targetQuality of TARGET_RESOLUTIONS_PER_SERVER) {
+                    const link = availableLinksMap.get(primaryServer)?.get(targetQuality);
                     if (link) {
-                        fallbackLinks.push(link);
+                        finalStreamLinksOutput.push(link);
+                        occupiedQualities.get(primaryServer).add(targetQuality);
+                    } else {
+                        missingSlots.push({ server: primaryServer, quality: targetQuality });
                     }
                 }
-                // Urutkan fallbackLinks berdasarkan prioritas server
-                fallbackLinks.sort((a, b) => (SERVER_PRIORITY[a.server] || SERVER_PRIORITY['DefaultServer']) - (SERVER_PRIORITY[b.server] || SERVER_PRIORITY['DefaultServer']));
-
-                if (fallbackLinks.length > 0) {
-                    patchLinkFound = fallbackLinks[0]; // Ambil yang paling prioritas
-                    console.log(`[Scraper] Penambal 'seadanya' ditemukan dari ${patchLinkFound.server} untuk ${missingQuality}.`);
-                }
             }
 
+            missingSlots.sort((a, b) => {
+                const qualityOrder = { '1080p': 1, '720p': 2, '480p': 3 };
+                return (qualityOrder[a.quality] || 99) - (qualityOrder[b.quality] || 99);
+            });
 
-            if (patchLinkFound) {
-                finalStreamLinksOutput.push(patchLinkFound);
-                // Tandai kualitas ini sudah terisi dari server patch
-                if (!occupiedQualities.has(patchLinkFound.server)) {
-                    occupiedQualities.set(patchLinkFound.server, new Set());
+            for (const missingSlot of missingSlots) {
+                const { server: targetPrimaryServer, quality: missingQuality } = missingSlot;
+                console.log(`[Scraper] Mencoba menambal slot: ${targetPrimaryServer} - ${missingQuality}`);
+
+                let patchLinkFound = null;
+
+                for (const patchServerName of OUTPUT_SERVER_PRIORITY_ORDER) {
+                    if (patchServerName === targetPrimaryServer) continue;
+
+                    const hasMissingQuality = availableLinksMap.get(patchServerName)?.has(missingQuality);
+
+                    if (hasMissingQuality) {
+                        if (!occupiedQualities.get(patchServerName)?.has(missingQuality)) {
+                            patchLinkFound = availableLinksMap.get(patchServerName).get(missingQuality);
+                            console.log(`[Scraper] Penambal ditemukan dari server prioritas: ${patchServerName} untuk ${missingQuality}.`);
+                            break;
+                        }
+                    }
                 }
-                occupiedQualities.get(patchLinkFound.server).add(patchLinkFound.quality);
-            } else {
-                console.warn(`[Scraper] Gagal menemukan link penambal untuk ${targetPrimaryServer} - ${missingQuality}. Slot dibiarkan kosong.`);
+
+                if (!patchLinkFound && currentLinksInPool > 0) {
+                    console.log(`[Scraper] Mencari penambal 'seadanya' untuk ${missingQuality} dari server yang tidak diutamakan...`);
+                    const fallbackLinks = [];
+                    for (const [sName, sLinks] of availableLinksMap.entries()) {
+                        if (sName === targetPrimaryServer) continue;
+
+                        if (occupiedQualities.has(sName) && occupiedQualities.get(sName).has(missingQuality)) {
+                            continue;
+                        }
+
+                        const link = sLinks.get(missingQuality);
+                        if (link) {
+                            fallbackLinks.push(link);
+                        }
+                    }
+                    fallbackLinks.sort((a, b) => (SERVER_PRIORITY[a.server] || SERVER_PRIORITY['DefaultServer']) - (SERVER_PRIORITY[b.server] || SERVER_PRIORITY['DefaultServer']));
+
+                    if (fallbackLinks.length > 0) {
+                        patchLinkFound = fallbackLinks[0];
+                        console.log(`[Scraper] Penambal 'seadanya' ditemukan dari ${patchLinkFound.server} untuk ${missingQuality}.`);
+                    }
+                }
+
+                if (patchLinkFound) {
+                    finalStreamLinksOutput.push(patchLinkFound);
+                    if (!occupiedQualities.has(patchLinkFound.server)) {
+                        occupiedQualities.set(patchLinkFound.server, new Set());
+                    }
+                    occupiedQualities.get(patchLinkFound.server).add(patchLinkFound.quality);
+                } else {
+                    console.warn(`[Scraper] Gagal menemukan link penambal untuk ${targetPrimaryServer} - ${missingQuality}. Slot dibiarkan kosong.`);
+                }
             }
         }
+        // --- AKHIR Logika Seleksi & Penambalan ---
 
         // --- Finalisasi: Urutkan output untuk konsistensi ---
+        // Jika finalStreamLinksOutput sudah terisi dari mode seadanya, kita hanya perlu mengurutkannya
         finalStreamLinksOutput.sort((a, b) => {
             const serverPriorityA = SERVER_PRIORITY[a.server] || SERVER_PRIORITY['DefaultServer'];
             const serverPriorityB = SERVER_PRIORITY[b.server] || SERVER_PRIORITY['DefaultServer'];
