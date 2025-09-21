@@ -1,3 +1,4 @@
+// apiClient.js
 require('dotenv').config();
 const axios = require('axios');
 
@@ -57,7 +58,11 @@ async function requestJob() {
  * @returns {Promise<boolean>}
  */
 async function submitResult(mal_id, episode_number, sources) {
-    if (!apiClient) throw new Error("API Client belum diinisialisasi. Panggil setBaseUrl() dulu!");
+    // BARU: Tambahkan validasi dasar untuk apiClient sebelum mencoba request
+    if (!apiClient) {
+        console.warn(`[API] Peringatan: API Client belum diinisialisasi. Hasil untuk MAL ID ${mal_id} Ep ${episode_number} tidak dapat dikirim ke backend.`);
+        return false;
+    }
 
     try {
         const payload = {
