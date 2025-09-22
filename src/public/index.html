@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Manager Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Sidebar untuk semua kontrol -->
+    <aside class="sidebar">
+        <header>
+            <h1>Bot Manager</h1>
+        </header>
+
+        <section class="control-group api-settings">
+            <h2>Pengaturan API</h2>
+            <div class="input-wrapper">
+                <label for="apiUrl">API Manager URL:</label>
+                <input type="text" id="apiUrl" placeholder="http://localhost:5000/api/v1">
+                <button id="saveApiUrl">Simpan</button>
+            </div>
+        </section>
+
+        <section class="control-group bot-controls">
+            <h2>Kontrol Bot</h2>
+            <nav class="tab-navigator">
+                <button id="tabManual" class="tab-button active">Mode Manual</button>
+                <button id="tabAutomatic" class="tab-button">Mode Otomatis</button>
+            </nav>
+
+            <!-- Panel Mode Manual -->
+            <div id="manualMode" class="mode-panel active">
+                <form id="manualForm">
+                    <input type="text" id="manualLink" placeholder="Link anime / episode" required>
+                    <input type="text" id="manualMalId" placeholder="MAL ID (misal: 54899)" required>
+                    <button type="submit" id="startManualBot">Mulai Bot Manual</button>
+                </form>
+            </div>
+
+            <!-- Panel Mode Otomatis -->
+            <div id="automaticMode" class="mode-panel">
+                <form id="automaticForm">
+                    <label for="workerCount">Jumlah Worker (Max 10):</label>
+                    <select id="workerCount">
+                        <script>
+                            for (let i = 1; i <= 10; i++) {
+                                document.write(`<option value="${i}">${i}</option>`);
+                            }
+                        </script>
+                    </select>
+                    <button type="submit" id="startAutomaticBot">Mulai Bot Otomatis</button>
+                </form>
+            </div>
+        </section>
+
+        <section class="control-group global-actions">
+            <h2>Aksi Global</h2>
+            <button id="stopAllBots" class="stop-button" disabled>HENTIKAN SEMUA BOT</button>
+        </section>
+    </aside>
+
+    <!-- Konten utama untuk status bot -->
+    <main id="bot-status-container" class="main-content">
+        <!-- Kartu status bot akan ditambahkan di sini secara dinamis -->
+        <p class="placeholder">Menunggu tugas bot...</p>
+    </main>
+
+    <!-- Modal untuk menampilkan log -->
+    <div id="logModal" class="modal">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2>Log Detail Bot</h2>
+                <span class="close-button">&times;</span>
+            </header>
+            <pre id="logContent"></pre>
+        </div>
+    </div>
+
+    <!-- Kontainer untuk notifikasi -->
+    <div id="notification-container"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="dashboard.js"></script>
+</body>
+
+</html>
